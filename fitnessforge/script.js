@@ -1,6 +1,6 @@
-// Supabase Config - Paste your URL and anon key here
-const SUPABASE_URL = https://nnvturmdypibmtlviwey.supabase.co;  // e.g., https://yourprojectid.supabase.co
-const SUPABASE_ANON_KEY = eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udnR1cm1keXBpYm10bHZpd2V5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE3NTg2ODcsImV4cCI6MjA3NzMzNDY4N30.nNc4gxGMdbax5ZPQczVkvGCBfeG2A0lT68SPN6E6Bjo;
+// Supabase Config - YOUR KEYS ARE NOW LIVE
+const SUPABASE_URL = 'https://nnvturmdypibmtlviwey.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5udnR1cm1keXBpYm10bHZpd2V5Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjE3NTg2ODcsImV4cCI6MjA3NzMzNDY4N30.nNc4gxGMdbax5ZPQczVkvGCBfeG2A0lT68SPN6E6Bjo';
 
 const supabase = Supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -39,7 +39,7 @@ document.getElementById('login-form').addEventListener('submit', async e => {
     const email = document.getElementById('email').value;
     const password = document.getElementById('password').value;
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    if (error) console.error(error);
+    if (error) alert('Login failed: ' + error.message);
 });
 
 // Register Form
@@ -48,8 +48,11 @@ document.getElementById('register-form').addEventListener('submit', async e => {
     const email = document.getElementById('reg-email').value;
     const password = document.getElementById('reg-password').value;
     const { error } = await supabase.auth.signUp({ email, password });
-    if (error) console.error(error);
-    else showSection('onboarding');
+    if (error) alert('Signup failed: ' + error.message);
+    else {
+        alert('Check your email for confirmation link!');
+        showSection('login');
+    }
 });
 
 // Logout
@@ -59,10 +62,20 @@ async function logout() {
 
 // Load Profile
 async function loadUserProfile() {
-    const { data } = await supabase.from('profiles').select('*').eq('id', currentUser.id).single();
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', currentUser.id)
+        .single();
+
+    if (error && error.code !== 'PGRST116') {
+        console.error(error);
+        return;
+    }
+
     if (data) {
         userProfile = data;
-        calorieGoal = data.calorie_goal;
+        calorieGoal = data.calorie_goal || 0;
         showSection('dashboard');
     } else {
         showSection('onboarding');
@@ -84,26 +97,55 @@ document.getElementById('profile-form').addEventListener('submit', async e => {
         updated_at: new Date().toISOString()
     };
 
-    const bmr = profile.sex === 'male' ? 88.362 + (13.397 * profile.weight) + (4.799 * profile.height) - (5.677 * profile.age)
+    // BMR & TDEE Calculation
+    const bmr = profile.sex === 'male'
+        ? 88.362 + (13.397 * profile.weight) + (4.799 * profile.height) - (5.677 * profile.age)
         : 447.593 + (9.247 * profile.weight) + (3.098 * profile.height) - (4.330 * profile.age);
-    const activityMultiplier = { sedentary: 1.2, light: 1.375, moderate: 1.55, active: 1.725 };
+
+    const activityMultiplier = {
+        sedentary: 1.2,
+        light: 1.375,
+        moderate: 1.55,
+        active: 1.725
+    };
+
     const tdee = bmr * activityMultiplier[profile.activity_level];
-    calorieGoal = profile.goal === 'lose' ? tdee - 500 : profile.goal === 'gain-weight' ? tdee + 500 : tdee + 250;
+    calorieGoal = profile.goal === 'lose' ? tdee - 500 :
+                  profile.goal === 'gain-weight' ? tdee + 500 : tdee + 250;
+
     profile.calorie_goal = Math.round(calorieGoal);
 
-    await supabase.from('profiles').upsert(profile);
-    userProfile = profile;
-    document.getElementById('profile-summary').innerHTML = `<p>Daily Calories: ${calorieGoal.toFixed(0)} | Macros: Protein ${Math.round(calorieGoal * 0.3 / 4)}g, Carbs ${Math.round(calorieGoal * 0.4 / 4)}g, Fat ${Math.round(calorieGoal * 0.3 / 9)}g</p>`;
-    showSection('dashboard');
+    // Save to Supabase
+    const { error } = await supabase.from('profiles').upsert(profile);
+    if (error) {
+        alert('Save failed: ' + error.message);
+    } else {
+        userProfile = profile;
+        document.getElementById('profile-summary').innerHTML = `
+            <p><strong>Daily Goal:</strong> ${calorieGoal.toFixed(0)} kcal</p>
+            <p>Protein: ~${Math.round(calorieGoal * 0.3 / 4)}g | Carbs: ~${Math.round(calorieGoal * 0.45 / 4)}g | Fat: ~${Math.round(calorieGoal * 0.25 / 9)}g</p>
+        `;
+        showSection('dashboard');
+    }
 });
 
 // Calorie Log
 async function logCalories() {
     const intake = parseInt(document.getElementById('daily-cal').value);
-    if (intake) {
-        await supabase.from('calorie_logs').insert({ user_id: currentUser.id, calories: intake, date: new Date().toISOString().split('T')[0] });
+    if (!intake || intake <= 0) return;
+
+    const { error } = await supabase
+        .from('calorie_logs')
+        .insert({
+            user_id: currentUser.id,
+            calories: intake,
+            date: new Date().toISOString().split('T')[0]
+        });
+
+    if (!error) {
         const progress = (intake / calorieGoal) * 100;
-        document.getElementById('cal-progress').style.width = Math.min(progress, 100) + '%';
+        document.getElementById('cal-progress').style.width = `${Math.min(progress, 100)}%`;
+        document.getElementById('daily-cal').value = '';
     }
 }
 
@@ -111,15 +153,27 @@ async function logCalories() {
 let weightLogs = [];
 async function logWeight() {
     const weight = parseFloat(document.getElementById('weekly-weight').value);
-    if (weight) {
-        await supabase.from('weight_logs').insert({ user_id: currentUser.id, weight, date: new Date().toISOString().split('T')[0] });
-        await loadWeightChart();
-    }
+    if (!weight || weight <= 0) return;
+
+    await supabase
+        .from('weight_logs')
+        .insert({
+            user_id: currentUser.id,
+            weight: weight,
+            date: new Date().toISOString().split('T')[0]
+        });
+
+    await loadWeightChart();
 }
 
 async function loadWeightChart() {
-    const { data } = await supabase.from('weight_logs').select('weight').eq('user_id', currentUser.id).order('date');
-    weightLogs = data.map(d => d.weight);
+    const { data } = await supabase
+        .from('weight_logs')
+        .select('weight, date')
+        .eq('user_id', currentUser.id)
+        .order('date', { ascending: true });
+
+    weightLogs = data.map(d => ({ weight: d.weight }));
     drawWeightChart();
 }
 
@@ -127,56 +181,88 @@ function drawWeightChart() {
     const canvas = document.getElementById('weight-chart');
     const ctx = canvas.getContext('2d');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    if (weightLogs.length > 1) {
-        const maxW = Math.max(...weightLogs);
-        const minW = Math.min(...weightLogs);
-        const scale = (canvas.height - 20) / (maxW - minW);
-        ctx.beginPath();
-        ctx.moveTo(0, canvas.height - (weightLogs[0] - minW) * scale);
-        weightLogs.forEach((w, i) => {
-            const x = (i / (weightLogs.length - 1)) * (canvas.width - 20);
-            const y = canvas.height - (w - minW) * scale;
-            ctx.lineTo(x, y);
-        });
-        ctx.strokeStyle = '#8B0000';
-        ctx.stroke();
-    }
+
+    if (weightLogs.length < 2) return;
+
+    const weights = weightLogs.map(l => l.weight);
+    const maxW = Math.max(...weights), minW = Math.min(...weights);
+    const range = maxW - minW || 1;
+    const scaleY = (canvas.height - 40) / range;
+    const stepX = (canvas.width - 40) / (weights.length - 1);
+
+    ctx.beginPath();
+    ctx.moveTo(20, canvas.height - 20 - (weights[0] - minW) * scaleY);
+
+    weights.forEach((w, i) => {
+        const x = 20 + i * stepX;
+        const y = canvas.height - 20 - (w - minW) * scaleY;
+        ctx.lineTo(x, y);
+        ctx.fillStyle = '#8B0000';
+        ctx.fillText(w.toFixed(1), x - 10, y - 5);
+    });
+
+    ctx.strokeStyle = '#8B0000';
+    ctx.lineWidth = 2;
+    ctx.stroke();
 }
 
 // Calendar
 let calendar;
 function initCalendar() {
     const calendarEl = document.getElementById('calendar-el');
+    if (calendar) calendar.destroy();
     calendar = new FullCalendar.Calendar(calendarEl, {
         initialView: 'dayGridMonth',
-        events: [] // Add dynamic events if needed
+        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek' },
+        events: async () => {
+            const { data } = await supabase.from('calorie_logs').select('date').eq('user_id', currentUser.id);
+            return (data || []).map(d => ({ title: 'Logged', start: d.date }));
+        }
     });
     calendar.render();
 }
 
-// Schedules
+// Schedules (Static for now)
 function loadSchedules() {
-    const weekly = ['Mon: Upper', 'Tue: Lower', 'Wed: Rest', 'Thu: Full', 'Fri: Cardio', 'Sat: Recovery', 'Sun: Rest'];
+    const weekly = [
+        'Mon: Upper Body', 'Tue: Lower Body', 'Wed: Rest',
+        'Thu: Full Body', 'Fri: Cardio', 'Sat: Active Recovery', 'Sun: Rest'
+    ];
     document.getElementById('weekly-schedule').innerHTML = weekly.map(day => `<li>${day}</li>`).join('');
-    const daily = ['7AM: Breakfast', '9AM: Workout', '12PM: Lunch', '6PM: Dinner', '8PM: Reflection'];
+
+    const daily = [
+        '7AM: Breakfast', '9AM: Workout', '12PM: Lunch',
+        '6PM: Dinner', '8PM: Log & Reflect'
+    ];
     document.getElementById('daily-schedule').innerHTML = daily.map(item => `<li>${item}</li>`).join('');
 }
 
-// Plans
+// Generate Personalized Plans
 function generatePlans() {
-    const workouts = userProfile.gym_access === 'no' ? ['Push-ups', 'Squats', 'Planks'] : ['Bench Press', 'Deadlifts', 'Pull-ups'];
+    const isGym = userProfile.gym_access === 'yes';
+    const workouts = isGym
+        ? ['Bench Press (4x8-10)', 'Deadlift (3x6)', 'Pull-ups (3x8)', 'Overhead Press (3x10)', 'Leg Press (3x12)']
+        : ['Push-ups (3x15)', 'Air Squats (3x20)', 'Plank (3x45s)', 'Lunges (3x12/leg)', 'Burpees (3x10)'];
+
+    const meals = [
+        'Breakfast: Oatmeal + banana + 2 eggs + peanut butter',
+        'Lunch: Chicken breast (or tofu) + rice + broccoli',
+        'Dinner: Salmon (or lentils) + sweet potato + salad',
+        'Snack: Greek yogurt + almonds'
+    ];
+
     document.getElementById('workout-list').innerHTML = workouts.map(w => `<li>${w}</li>`).join('');
-    const meals = ['Breakfast: Oats', 'Lunch: Chicken Rice', 'Dinner: Salmon', 'Snack: Yogurt'];
     document.getElementById('meal-list').innerHTML = meals.map(m => `<li>${m}</li>`).join('');
 }
 
 // Dashboard Load
 async function loadDashboard() {
     await loadWeightChart();
+    document.getElementById('cal-progress').style.width = '0%';
 }
 
 // Dark Mode
 document.getElementById('dark-toggle').addEventListener('click', () => {
     document.body.classList.toggle('dark');
-    document.getElementById('dark-toggle').textContent = document.body.classList.contains('dark') ? '☀️' : '🌙';
+    document.getElementById('dark-toggle').textContent = document.body.classList.contains('dark') ? 'Sun' : 'Moon';
 });
